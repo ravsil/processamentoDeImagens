@@ -70,7 +70,19 @@ class PathologyDataset(Dataset):
 
     def __getitem__(self, idx: int) -> Tuple[Any, int] | Tuple[Any, int, Dict[str, Any]]:
         record = self.records[idx]
-        image_path = record["absolute_path"]
+        image_path = Path(record.get("absolute_path", ""))
+        if not image_path.exists():
+            rel_path = record.get("relative_path", "")
+            if rel_path:
+                candidates = [
+                    self.manifest_path.parent / rel_path,
+                    Path.cwd() / "data" / rel_path,
+                    Path.cwd() / rel_path,
+                ]
+                for cand in candidates:
+                    if cand.exists():
+                        image_path = cand
+                        break
 
         with Image.open(image_path) as img:
             image = img.convert("RGB")

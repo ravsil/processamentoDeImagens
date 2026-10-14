@@ -1,6 +1,6 @@
 # AGENTS.md — PathoShift Challenge Agent Summary
 
-This document serves as the high-level operational guide for AI agents working within the **PathoShift** repository. Detailed workflows and procedures are partitioned into modular skills under [`.agents/skills/`](file:///home/rafael/procimgs/.agents/skills/).
+This document serves as the high-level operational guide for AI agents working within the **PathoShift** repository. Detailed workflows and procedures are partitioned into modular skills under [`skills/`](skills/).
 
 ---
 
@@ -29,10 +29,10 @@ Detailed procedures are modularized into workspace skills:
 
 | Skill | Path | Description |
 | :--- | :--- | :--- |
-| **Pipeline Execution** | [`.agents/skills/pipeline-execution/SKILL.md`](file:///home/rafael/procimgs/.agents/skills/pipeline-execution/SKILL.md) | Operating CLI commands (`prepare`, `eda`, `train`, `predict`, `evaluate`, `describe`) and demo data generation. |
-| **Stain & Preprocessing** | [`.agents/skills/stain-preprocessing/SKILL.md`](file:///home/rafael/procimgs/.agents/skills/stain-preprocessing/SKILL.md) | Tissue mask segmentation, focus scoring ($\sigma^2_{\nabla^2}$), and Macenko/Reinhard stain normalization. |
-| **Model Training** | [`.agents/skills/model-training/SKILL.md`](file:///home/rafael/procimgs/.agents/skills/model-training/SKILL.md) | Training ResNet-18, SimpleCNN, and classical feature extractors (GLCM, LBP, color moments) with RF/SVM. |
-| **Evaluation & Reporting** | [`.agents/skills/evaluation-reporting/SKILL.md`](file:///home/rafael/procimgs/.agents/skills/evaluation-reporting/SKILL.md) | Balanced accuracy, macro metrics, confusion matrices, error gallery inspection, and SIBGRAPI LaTeX report. |
+| **Pipeline Execution** | [`skills/pipeline-execution/SKILL.md`](skills/pipeline-execution/SKILL.md) | Operating CLI commands (`prepare`, `eda`, `train`, `predict`, `evaluate`, `describe`) and demo data generation. |
+| **Stain & Preprocessing** | [`skills/stain-preprocessing/SKILL.md`](skills/stain-preprocessing/SKILL.md) | Tissue mask segmentation, focus scoring ($\sigma^2_{\nabla^2}$), and Macenko/Reinhard stain normalization. |
+| **Model Training** | [`skills/model-training/SKILL.md`](skills/model-training/SKILL.md) | Training ResNet-18, SimpleCNN, and classical feature extractors (GLCM, LBP, color moments) with RF/SVM. |
+| **Evaluation & Reporting** | [`skills/evaluation-reporting/SKILL.md`](skills/evaluation-reporting/SKILL.md) | Balanced accuracy, macro metrics, confusion matrices, error gallery inspection, and SIBGRAPI LaTeX report. |
 
 ---
 

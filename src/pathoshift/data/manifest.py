@@ -192,8 +192,17 @@ def validate_manifest(manifest_path: Path | str, verify_checksum: bool = True) -
     missing = []
     corrupted = []
 
+    manifest_p = Path(manifest_path)
     for r in records:
-        p = Path(r["absolute_path"])
+        p = Path(r.get("absolute_path", ""))
+        if not p.exists():
+            rel = r.get("relative_path")
+            if rel:
+                for cand in [manifest_p.parent / rel, Path.cwd() / "data" / rel, Path.cwd() / rel]:
+                    if cand.exists():
+                        p = cand
+                        break
+
         if not p.exists() or p.stat().st_size == 0:
             missing.append(r["image_id"])
             continue

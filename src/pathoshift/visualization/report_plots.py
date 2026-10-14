@@ -89,7 +89,14 @@ def plot_error_gallery(
         p_label = class_names[y_pred_arr[idx]] if y_pred_arr[idx] < len(class_names) else str(y_pred_arr[idx])
         conf = error_confidences[ranked_order[i]]
 
-        img_path = rec["absolute_path"]
+        img_path = Path(rec.get("absolute_path", ""))
+        if not img_path.exists() and "relative_path" in rec:
+            rel = rec["relative_path"]
+            for cand in [Path.cwd() / "data" / rel, Path.cwd() / rel]:
+                if cand.exists():
+                    img_path = cand
+                    break
+
         try:
             with Image.open(img_path) as img:
                 axes[i].imshow(img.convert("RGB"))

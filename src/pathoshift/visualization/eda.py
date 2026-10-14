@@ -73,8 +73,14 @@ def plot_color_channels(records: List[Dict[str, Any]], output_path: Path | str, 
     h_vals, s_vals, v_vals = [], [], []
 
     for r in sample_records:
-        path = r["absolute_path"]
-        bgr = cv2.imread(path)
+        path = r.get("absolute_path", "")
+        if not Path(path).exists() and "relative_path" in r:
+            rel = r["relative_path"]
+            for cand in [Path.cwd() / "data" / rel, Path.cwd() / rel]:
+                if cand.exists():
+                    path = str(cand)
+                    break
+        bgr = cv2.imread(str(path))
         if bgr is None:
             continue
         rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
