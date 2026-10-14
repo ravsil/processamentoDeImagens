@@ -1,0 +1,91 @@
+%======================================================================
+% Sibgrapi 2021 IEEEtran LaTeX Template
+% PathoShift Challenge - Entrega 1: Pathology Image Pipeline
+%======================================================================
+\documentclass[10pt,conference]{IEEEtran}
+
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{url}
+\usepackage{subfig}
+
+\graphicspath{{figs/}{../outputs/eda/}{../outputs/plots/}}
+
+\begin{document}
+
+\title{PathoShift Challenge: Pipeline Robusto para Triagem em Patologia Digital --- Entrega 1}
+
+\author{
+    \IEEEauthorblockN{Grupo de Processamento de Imagens}
+    \IEEEauthorblockA{Departamento de Ci\^encia da Computa\c{c}\~ao\\
+    Universidade Federal Rural do Rio de Janeiro (UFRRJ)\\
+    Serop\'edica, RJ, Brasil}
+}
+
+\maketitle
+
+\begin{abstract}
+Este trabalho apresenta o desenvolvimento da Entrega 1 do \textit{PathoShift Challenge}, cujo objetivo \'e construir um pipeline reprodut\'ivel, audit\'avel e modular de processamento de imagens histopatol\'ogicas coloridas por Hematoxilina e Eosina (H\&E). O sistema implementa ingest\~ao validada de dados com gera\c{c}\~ao de manifesto reprodut\'ivel com controle de integridade via \textit{hashes} SHA-256 e estrat\'egia de parti\c{c}\~ao livre de vazamento em n\'ivel de paciente/l\^amina. Realiza-se an\'alise explorat\'oria detalhada cobrindo distribui\c{c}\~ao de classes, dimens\~oes, canais de cor e detec\c{c}\~ao de artefatos. O pipeline incorpora etapas justificadas de pr\'e-processamento, incluindo rejei\c{c}\~ao autom\'atica de fundo por satura\c{c}\~ao HSV, filtro de nitidez por vari\^ancia do Laplaciano e normaliza\c{c}\~ao de colora\c{c}\~ao (Macenko e Reinhard). Avaliam-se baselines baseados em atributos cl\'assicos de textura (GLCM, LBP) e cor, bem como redes neurais profundas (ResNet-18), com c\'alculo de m\'etricas macro, por classe, acur\'acia balanceada, matriz de confus\~ao e an\'alise visual de erros.
+\end{abstract}
+
+\section{Introdu\c{c}\~ao}
+A patologia digital revolucionou o diagn\'ostico m\'edico ao permitir a digitaliza\c{c}\~ao de l\^aminas de bi\'opsia (\textit{Whole Slide Images} - WSI). No entanto, a an\'alise computacional dessas imagens enfrenta grande heterogeneidade biol\'ogica e t\'ecnica decorrente de diferen\c{c}as em protocolos de colora\c{c}\~ao H\&E, tempos de exposi\c{c}\~ao, fabricantes de esc\^aneres e espessura do corte tecidual~\cite{macenko2009method}.
+
+Nesta primeira etapa (\textit{Entrega 1 --- Pathology Image Pipeline}), desenvolveu-se uma solu\c{c}\~ao computacional completa, orientada por CLI (\texttt{pathoshift}), estruturada para garantir estrita reprodutibilidade experimental, rastreabilidade de hiperpar\^ametros e avalia\c{c}\~ao sem vazamento de dados.
+
+\section{Ingest\~ao de Dados e Manifesto Reprodut\'ivel}
+A confian\c{c}a em um pipeline biom\'edico exige valida\c{c}\~ao sistem\'atica dos dados de entrada:
+\begin{enumerate}
+    \item \textbf{Verifica\c{c}\~ao de Integridade:} Para cada recorte (\textit{tile}), computa-se a soma de verifica\c{c}\~ao criptogr\'afica SHA-256 e validam-se dimens\~oes espaciais e canais de cor.
+    \item \textbf{Manifesto JSONL:} Gera-se o arquivo estruturado \texttt{manifest.jsonl}, contendo identificadores \'unicos, metadados de aquisi\c{c}\~ao, atributos de qualidade e parti\c{c}\~ao associada.
+    \item \textbf{Parti\c{c}\~ao sem Vazamento (\textit{Patient/Slide-Aware Split}):} A divis\~ao entre treino (70\%), valida\c{c}\~ao (15\%) e teste (15\%) \'e efetuada agrupando todos os \textit{tiles} de um mesmo paciente ou l\^amina sob uma \'unica parti\c{c}\~ao, prevenindo atalhos espaciais esp\'urios.
+\end{enumerate}
+
+\section{An\'alise Explorat\'oria de Dados (EDA)}
+A investiga\c{c}\~ao das caracter\'isticas das imagens foi automatizada pelo comando \texttt{pathoshift eda}:
+\begin{itemize}
+    \item \textbf{Distribui\c{c}\~ao de Classes:} Avalia\c{c}\~ao da raz\~ao de desbalanceamento entre categorias teciduais.
+    \item \textbf{Propriedades Fotom\'etricas:} An\'alise de densidade de intensidade nos espa\c{c}os RGB e HSV, evidenciando o predom\'inio de picos no canal vermelho (afinidade \'acida da Eosina no citoplasma) e azul (afinidade b\'asica da Hematoxilina nos n\'ucleos celulares).
+    \item \textbf{Avalia\c{c}\~ao de Foco e Nitidez:} Aferida quantitativamente por meio da vari\^ancia da transformada Laplaciana da intensidade em n\'iveis de cinza ($\sigma^2_{\nabla^2}$), na qual \'areas n\'itidas exibem alta vari\^ancia de borda celular e \'areas desfocadas apresentam baixos valores.
+\end{itemize}
+
+\section{Pr\'e-processamento e Normaliza\c{c}\~ao}
+\subsection{Rejei\c{c}\~ao de Fundo Vazio}
+Imagens digitalizadas frequentemente contêm por\c{c}\~oes substanciais de vidro transparente. O m\'odulo \texttt{quality} computa a m\'ascara bin\'aria de tecido avaliando a satura\c{c}\~ao HSV e lumin\^ancia m\'axima, descartando \textit{tiles} com raz\~ao tecidual inferior a 40\%.
+
+\subsection{Normaliza\c{c}\~ao de Colora\c{c}\~ao}
+Para atenuar a mudan\c{c}a de dom\'inio fotom\'etrico entre diferentes fontes, foram implementados:
+\begin{itemize}
+    \item \textbf{M\'etodo de Macenko et al.~\cite{macenko2009method}:} Decomposi\c{c}\~ao em Densidade \'Optica (OD) via decomposi\c{c}\~ao em valores singulares (SVD), extra\c{c}\~ao dos vetores extremos de colora\c{c}\~ao H e E e remapeamento das concentra\c{c}\~oes para uma l\^amina de refer\^encia.
+    \item \textbf{M\'etodo de Reinhard et al.~\cite{reinhard2001color}:} Transfer\^encia de m\'edia e desvio padr\~ao dos canais no espa\c{c}o de cor perceptivo $L\alpha\beta$.
+\end{itemize}
+
+\section{Modelos de Classifica\c{c}\~ao}
+\subsection{Baseline Cl\'assico}
+Extraem-se atributos artesanais baseados em:
+\begin{enumerate}
+    \item \textbf{Cor:} Histogramas de 16 faixas e momentos estat\'isticos (m\'edia, desvio padr\~ao, assimetria) nos espa\c{c}os RGB e HSV.
+    \item \textbf{Textura:} Matrizes de Co-ocorr\^encia em N\'iveis de Cinza (GLCM)~\cite{haralick1973textural} (calculando contraste, dissimilaridade, homogeneidade, energia, correla\c{c}\~ao e ASM) combinadas com histogramas de Padr\~oes Bin\'arios Locais (LBP).
+\end{enumerate}
+A classifica\c{c}\~ao \'e realizada com \textit{Random Forest} balanceado ou SVM RBF com padroniza\c{c}\~ao prévia de atributos.
+
+\subsection{Baseline Convolucional (ResNet-18)}
+Empregou-se uma arquitetura ResNet-18~\cite{he2016deep} adaptada para o n\'umero de classes do problema, com cabe\c{c}ote linear regularizado com \textit{dropout} (0.2), fun\c{c}\~ao de perda de entropia cruzada ponderada por classe, otimizador AdamW ($\eta = 3 \times 10^{-4}$) e parada antecipada (\textit{early stopping}) orientada pelo Macro-F1 na parti\c{c}\~ao de valida\c{c}\~ao.
+
+\section{Resultados e Discuss\~ao}
+Os modelos foram avaliados empregando a su\'ite do comando \texttt{pathoshift evaluate}, reportando m\'etricas por classe, Macro-F1, acur\'acia balanceada e matriz de confus\~ao normalizada. Para diagn\'ostico de falhas, o pipeline gera automaticamente uma galeria visual com os erros de maior confian\c{c}a predita, permitindo a inspe\c{c}\~ao qualitativa das causas de confus\~ao (como artefatos de corte ou dobras teciduais).
+
+\section{Reprodutibilidade e Custo Computacional}
+O comando \texttt{pathoshift describe} relata todas as vers\~oes de bibliotecas, sistema operacional Linux (kernel 6.6) e presen\c{c}a de acelera\c{c}\~ao por hardware GPU (NVIDIA GeForce RTX 3050, 6GB VRAM, CUDA 12.4). O tempo de execu\c{c}\~ao e sementes determin\'isticas s\~ao persistidos em \texttt{outputs/training\_history.json}.
+
+\section{Aviso \'Etico}
+Este software foi desenvolvido com finalidade estritamente acad\^emica e de pesquisa experimental em processamento de imagens. N\~ao possui finalidade diagn\'ostica, terap\^eutica ou de suporte a decis\~ao cl\'inica.
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}

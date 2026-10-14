@@ -1,0 +1,52 @@
+# PathoShift Pipeline Configuration - Entrega 1
+
+seed: 42
+device: "auto"       # "cuda", "cpu", or "auto"
+num_workers: 4
+
+data:
+  input_dir: "data/raw"
+  manifest_path: "outputs/manifest.jsonl"
+  split_strategy: "stratified"   # "patient", "slide", or "stratified"
+  split_ratios:
+    train: 0.70
+    val: 0.15
+    test: 0.15
+  target_size: [224, 224]
+
+preprocessing:
+  background_rejection:
+    enabled: true
+    min_tissue_ratio: 0.40       # Minimum ratio of non-background tissue required
+    saturation_threshold: 15     # HSV Saturation threshold (0-255) for tissue detection
+  
+  stain_normalization:
+    enabled: false               # Evaluated with both false and true for ablation
+    method: "macenko"            # "macenko" or "reinhard"
+  
+  focus_assessment:
+    enabled: true
+    laplacian_var_threshold: 50.0  # Quality filtering / logging
+
+  augmentation:
+    horizontal_flip: true
+    vertical_flip: true
+    random_rotate90: true
+    color_jitter: 0.1
+
+model:
+  type: "resnet18"               # "resnet18", "simple_cnn", "random_forest", "svm"
+  pretrained: true
+  num_classes: null              # Inferred from dataset if null
+  batch_size: 32
+  learning_rate: 0.0003
+  weight_decay: 0.0001
+  epochs: 15
+  early_stopping_patience: 4
+
+output:
+  output_dir: "outputs"
+  checkpoint_dir: "outputs/checkpoints"
+  metrics_file: "outputs/metrics.json"
+  plots_dir: "outputs/plots"
+  timing_file: "outputs/timing.json"
