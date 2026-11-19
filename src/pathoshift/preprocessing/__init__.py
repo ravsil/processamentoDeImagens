@@ -9,10 +9,14 @@ from pathoshift.preprocessing.stain_norm import (
     MacenkoNormalizer,
     ReinhardNormalizer,
 )
-from pathoshift.preprocessing.transforms import (
-    StainNormTransform,
-    get_image_transforms,
-)
+try:  # PyTorch é opcional (pipeline final usa apenas CPU/scikit-learn)
+    from pathoshift.preprocessing.transforms import (
+        StainNormTransform,
+        get_image_transforms,
+    )
+except ImportError:  # pragma: no cover
+    StainNormTransform = None
+    get_image_transforms = None
 
 __all__ = [
     "compute_tissue_mask",

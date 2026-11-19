@@ -1,91 +1,222 @@
 %======================================================================
-% Sibgrapi 2021 IEEEtran LaTeX Template
-% PathoShift Challenge - Entrega 1: Pathology Image Pipeline
+% PathoShift-CRC Mini Challenge — Relatório final (IEEEtran / SIBGRAPI)
 %======================================================================
 \documentclass[10pt,conference]{IEEEtran}
 
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[brazilian]{babel}
 \usepackage{cite}
-\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{amsmath,amssymb}
 \usepackage{graphicx}
-\usepackage{textcomp}
-\usepackage{xcolor}
 \usepackage{booktabs}
 \usepackage{url}
-\usepackage{subfig}
+\usepackage{xcolor}
+\usepackage[hidelinks]{hyperref}
 
-\graphicspath{{figs/}{../outputs/eda/}{../outputs/plots/}}
+\graphicspath{{figs/}}
+\newcommand{\cfg}[1]{\texttt{#1}}
 
 \begin{document}
 
-\title{PathoShift Challenge: Pipeline Robusto para Triagem em Patologia Digital --- Entrega 1}
+\title{PathoShift-CRC: Aumentação de aquisição versus normalização de cor\\para classificação robusta de tecido colorretal}
 
 \author{
-    \IEEEauthorblockN{Grupo de Processamento de Imagens}
-    \IEEEauthorblockA{Departamento de Ci\^encia da Computa\c{c}\~ao\\
-    Universidade Federal Rural do Rio de Janeiro (UFRRJ)\\
-    Serop\'edica, RJ, Brasil}
+  \IEEEauthorblockN{Helcio Duarte, Rafael Vieira, Mariana Ferrarez}
+  \IEEEauthorblockA{Processamento de Imagens --- Universidade Federal Rural do Rio de Janeiro (UFRRJ)\\Seropédica, RJ, Brasil}
 }
 
 \maketitle
 
 \begin{abstract}
-Este trabalho apresenta o desenvolvimento da Entrega 1 do \textit{PathoShift Challenge}, cujo objetivo \'e construir um pipeline reprodut\'ivel, audit\'avel e modular de processamento de imagens histopatol\'ogicas coloridas por Hematoxilina e Eosina (H\&E). O sistema implementa ingest\~ao validada de dados com gera\c{c}\~ao de manifesto reprodut\'ivel com controle de integridade via \textit{hashes} SHA-256 e estrat\'egia de parti\c{c}\~ao livre de vazamento em n\'ivel de paciente/l\^amina. Realiza-se an\'alise explorat\'oria detalhada cobrindo distribui\c{c}\~ao de classes, dimens\~oes, canais de cor e detec\c{c}\~ao de artefatos. O pipeline incorpora etapas justificadas de pr\'e-processamento, incluindo rejei\c{c}\~ao autom\'atica de fundo por satura\c{c}\~ao HSV, filtro de nitidez por vari\^ancia do Laplaciano e normaliza\c{c}\~ao de colora\c{c}\~ao (Macenko e Reinhard). Avaliam-se baselines baseados em atributos cl\'assicos de textura (GLCM, LBP) e cor, bem como redes neurais profundas (ResNet-18), com c\'alculo de m\'etricas macro, por classe, acur\'acia balanceada, matriz de confus\~ao e an\'alise visual de erros.
+Avaliamos se pré-processar imagens histopatológicas H\&E torna um classificador clássico (cor + GLCM + LBP + SVM) mais robusto a mudanças de aquisição. No protocolo oficial do PathoShift-CRC (9.000 imagens de treino, 2.250 de validação, 9 classes), o baseline atinge F1-macro de 0,963 na validação, mas cai para 0,602 no conjunto de robustez (brilho/contraste, JPEG, desfoque e ruído). Uma ablação com 14 configurações mostra que normalização de cor por imagem (Reinhard, Macenko) traz pouco ou piora o resultado, enquanto suavização gaussiana ($\sigma{=}1$) combinada com aumentação de aquisição no treino eleva o F1-macro de robustez para 0,925 (queda de apenas 0,041) sem perder desempenho na validação limpa e mantendo a calibração. Os resultados são experimentais e não têm valor clínico.
 \end{abstract}
 
-\section{Introdu\c{c}\~ao}
-A patologia digital revolucionou o diagn\'ostico m\'edico ao permitir a digitaliza\c{c}\~ao de l\^aminas de bi\'opsia (\textit{Whole Slide Images} - WSI). No entanto, a an\'alise computacional dessas imagens enfrenta grande heterogeneidade biol\'ogica e t\'ecnica decorrente de diferen\c{c}as em protocolos de colora\c{c}\~ao H\&E, tempos de exposi\c{c}\~ao, fabricantes de esc\^aneres e espessura do corte tecidual~\cite{macenko2009method}.
+%----------------------------------------------------------------------
+\section{Objetivo e hipótese}
+Imagens de patologia variam em cor, iluminação, foco e compressão. Nossa pergunta é: \emph{padronizar a imagem antes da extração de atributos (normalização de cor e/ou suavização) torna o classificador mais robusto do que treinar com aumentação dessas mudanças? As duas estratégias se somam?} A hipótese inicial era que a normalização de cor reduziria a sensibilidade a variações de brilho/contraste e a suavização reduziria a sensibilidade a ruído e JPEG. A métrica principal é o F1-macro e a medida de robustez é a queda de F1-macro entre a validação e o conjunto de robustez.
 
-Nesta primeira etapa (\textit{Entrega 1 --- Pathology Image Pipeline}), desenvolveu-se uma solu\c{c}\~ao computacional completa, orientada por CLI (\texttt{pathoshift}), estruturada para garantir estrita reprodutibilidade experimental, rastreabilidade de hiperpar\^ametros e avalia\c{c}\~ao sem vazamento de dados.
+%----------------------------------------------------------------------
+\section{Dados e partições}
+Usamos exclusivamente o pacote PathoShift-CRC, um subconjunto do NCT-CRC-HE-100K-NONORM~\cite{kather2018dataset,kather2019predicting} com 9 classes (ADI, BACK, DEB, LYM, MUC, MUS, NORM, STR, TUM). \cfg{train.csv} contém 9.000 imagens (1.000/classe) e \cfg{validation.csv} 2.250 (250/classe). \cfg{robustness.csv} aplica uma perturbação determinística a cada imagem de validação: brilho/contraste ($b{=}0{,}15$, $c{=}1{,}2$; 563 imagens), JPEG ($q{=}35$; 563), desfoque gaussiano ($\sigma{=}1{,}2$; 562) e ruído gaussiano ($\sigma{=}12$; 562). O código verifica que não há interseção entre treino e validação e que os rótulos vêm apenas da coluna \cfg{label}; nomes de arquivo não são usados como atributo.
 
-\section{Ingest\~ao de Dados e Manifesto Reprodut\'ivel}
-A confian\c{c}a em um pipeline biom\'edico exige valida\c{c}\~ao sistem\'atica dos dados de entrada:
-\begin{enumerate}
-    \item \textbf{Verifica\c{c}\~ao de Integridade:} Para cada recorte (\textit{tile}), computa-se a soma de verifica\c{c}\~ao criptogr\'afica SHA-256 e validam-se dimens\~oes espaciais e canais de cor.
-    \item \textbf{Manifesto JSONL:} Gera-se o arquivo estruturado \texttt{manifest.jsonl}, contendo identificadores \'unicos, metadados de aquisi\c{c}\~ao, atributos de qualidade e parti\c{c}\~ao associada.
-    \item \textbf{Parti\c{c}\~ao sem Vazamento (\textit{Patient/Slide-Aware Split}):} A divis\~ao entre treino (70\%), valida\c{c}\~ao (15\%) e teste (15\%) \'e efetuada agrupando todos os \textit{tiles} de um mesmo paciente ou l\^amina sob uma \'unica parti\c{c}\~ao, prevenindo atalhos espaciais esp\'urios.
-\end{enumerate}
+\textbf{Análise inicial.} As 11.250 imagens são TIFF RGB de $224{\times}224$. As classes são balanceadas, mas muito heterogêneas em cor (o conjunto não foi normalizado). ADI e BACK são quase brancas (luminância mediana 237 e 243, saturação HSV < 7), BACK quase não tem bordas (variância do Laplaciano mediana 3,7, contra 480--1280 nas classes de tecido) e LYM é a classe mais escura (Fig.~\ref{fig:eda}). Isso antecipa um risco: um aumento de brilho satura ADI/BACK e apaga as poucas estruturas que as distinguem.
 
-\section{An\'alise Explorat\'oria de Dados (EDA)}
-A investiga\c{c}\~ao das caracter\'isticas das imagens foi automatizada pelo comando \texttt{pathoshift eda}:
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{examples_per_class.jpg}\\[2pt]
+\includegraphics[width=\linewidth]{color_quality_by_class.png}
+\caption{Exemplos de treino e estatísticas de cor e foco por classe (treino).}
+\label{fig:eda}
+\end{figure}
+
+%----------------------------------------------------------------------
+\section{Pré-processamento}
+O pré-processamento é aplicado antes da extração de atributos, na ordem suavização $\rightarrow$ normalização de cor, porque ruído e artefatos de bloco distorcem as estatísticas usadas na estimativa de cor.
 \begin{itemize}
-    \item \textbf{Distribui\c{c}\~ao de Classes:} Avalia\c{c}\~ao da raz\~ao de desbalanceamento entre categorias teciduais.
-    \item \textbf{Propriedades Fotom\'etricas:} An\'alise de densidade de intensidade nos espa\c{c}os RGB e HSV, evidenciando o predom\'inio de picos no canal vermelho (afinidade \'acida da Eosina no citoplasma) e azul (afinidade b\'asica da Hematoxilina nos n\'ucleos celulares).
-    \item \textbf{Avalia\c{c}\~ao de Foco e Nitidez:} Aferida quantitativamente por meio da vari\^ancia da transformada Laplaciana da intensidade em n\'iveis de cinza ($\sigma^2_{\nabla^2}$), na qual \'areas n\'itidas exibem alta vari\^ancia de borda celular e \'areas desfocadas apresentam baixos valores.
+\item \textbf{Suavização}: filtro gaussiano $\sigma{=}1$ (\cfg{gauss1}) ou mediana $3{\times}3$ (\cfg{median3}). A ideia é atenuar ruído de alta frequência e blocos de JPEG e aproximar imagens nítidas e desfocadas na mesma escala.
+\item \textbf{Normalização de cor}: Reinhard~\cite{reinhard2001color} (média e desvio por canal LAB levados à referência média de 900 imagens de treino) e Macenko~\cite{macenko2009method} (vetores H\&E por SVD em densidade óptica, reprojetados para a referência padrão).
+\item \textbf{Aumentação de aquisição} (\cfg{+aug}): para cada imagem de treino, uma cópia com \emph{uma} mudança sorteada, com faixas fixadas a priori com base em~\cite{tellez2019quantifying}: brilho $U(-0{,}2;0{,}2)$, contraste $U(0{,}75;1{,}3)$, matiz $\pm 6$, saturação $\times U(0{,}8;1{,}2)$; JPEG $q\in[20,90]$; desfoque $\sigma\in U(0{,}4;2)$; ruído $\sigma\in U(3;20)$.
+\end{itemize}
+A Fig.~\ref{fig:pert} mostra as quatro perturbações oficiais e o efeito do pré-processamento. A normalização de Reinhard por imagem tinge de rosa o fundo branco, o que remove a pista de brilho absoluto de ADI/BACK.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{perturbation_examples.jpg}
+\caption{Uma imagem ADI de validação sob as perturbações de \cfg{robustness.csv} (acima) e após Reinhard + gaussiana (abaixo). Brilho/contraste satura o fundo e apaga parte das membranas.}
+\label{fig:pert}
+\end{figure}
+
+%----------------------------------------------------------------------
+\section{Baseline e proposta}
+\textbf{Baseline (reaproveitado da Entrega 1).} Vetor de 152 atributos: média, desvio, assimetria e histograma de 16 faixas por canal RGB e HSV; 6 propriedades GLCM~\cite{haralick1973textural} (64 níveis, distâncias 1 e 3, 4 ângulos); histograma LBP uniforme~\cite{ojala2002multiresolution} ($P{=}24$, $R{=}3$). Classificador: \cfg{StandardScaler} + SVM RBF (\cfg{gamma=scale}, $C\in\{1,10\}$), com confiança obtida por escala de Platt. O baseline usa a imagem crua (\cfg{raw}).
+
+\textbf{Proposta e ablação.} Mesmos atributos e classificador, variando só o pré-processamento: \{\cfg{raw}, \cfg{reinhard}, \cfg{macenko}, \cfg{gauss1}, \cfg{median3}, \cfg{reinhard+gauss1}, \cfg{macenko+gauss1}\} $\times$ \{sem, com aumentação\}, totalizando 14 configurações.
+
+\subsection{Aproveitamento da etapa inicial}
+\emph{Reaproveitados sem alteração:} normalizadores Macenko e Reinhard, medidas de tecido e foco, extrator de atributos e métricas. \emph{Modificados:} o extrator passou a definir a assimetria de canal constante como 0 (antes gerava NaN em imagens saturadas pela perturbação de brilho), e o PyTorch passou a ser dependência opcional. \emph{Novos:} leitura dos manifestos oficiais, perturbações de \cfg{robustness.csv}, aumentação, pré-processamento configurável, protocolo de seleção, avaliação de robustez, figuras e CSVs no contrato. As partições próprias por paciente da etapa anterior foram substituídas pelos manifestos oficiais, e o baseline foi reexecutado nelas. ResNet-18 e CNNs da Entrega 1 não foram usadas, para manter o pipeline executável só com CPU.
+
+%----------------------------------------------------------------------
+\section{Protocolo}
+\begin{enumerate}
+\item Treino apenas com \cfg{train.csv} (mais a cópia aumentada, quando aplicável).
+\item Seleção de configuração e de $C$ \emph{apenas} na validação, em duas versões: limpa e \emph{validação-proxy}, que são as mesmas 2.250 imagens com mudanças sorteadas pelo nosso gerador com seed própria, independente de \cfg{robustness.csv}. Regra fixada antes da avaliação: baseline = \cfg{raw} com o $C$ de maior F1 na validação limpa; proposta = configuração com maior média entre F1 da validação limpa e F1 da proxy.
+\item A escolha é gravada em \cfg{selection.json}. Só depois \cfg{robustness.csv} é avaliado, sem retreino. As demais linhas da ablação nesse conjunto são reportadas apenas como análise.
+\item Métricas: F1-macro (principal), acurácia, F1/precisão/revocação por classe, matriz de confusão, ECE com 15 faixas~\cite{guo2017calibration} e IC 95\% por bootstrap pareado (2.000 reamostragens). Os CSVs entregues foram validados com \cfg{evaluate\_pathoshift\_crc.mjs}.
+\end{enumerate}
+\textbf{Reprodutibilidade e custo.} Seed 42; seeds de aumentação e proxy determinísticas por linha; seeds de robustez do manifesto. Hardware: Intel i5-8265U (4 núcleos/8 threads), 8\,GiB de RAM, Windows 11, sem GPU. A extração de atributos das 7 variantes para todos os conjuntos levou cerca de 65 min. O treino do SVM levou 8\,s (baseline) e 43\,s (proposta, 18.000 amostras com Platt). A inferência da proposta em 2.250 imagens com 4 processos levou 85\,s, e uma reexecução reproduziu as predições de forma idêntica.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.95\linewidth]{errors_robustness.jpg}
+\caption{Erros de maior confiança da proposta em \cfg{robustness.csv} (V = verdadeiro, P = proposta, B = baseline, seguido da perturbação).}
+\label{fig:err}
+\end{figure*}
+
+%----------------------------------------------------------------------
+\section{Resultados}
+A configuração selecionada foi \cfg{gauss1+aug} ($C{=}10$), com escore de seleção 0,946 contra 0,940 de \cfg{reinhard+gauss1+aug}. A Tabela~\ref{tab:main} compara a proposta com o baseline. Na validação limpa os dois empatam (a diferença de +0,003 está dentro do IC). Na robustez, a proposta ganha 0,32 de F1-macro e a queda validação$\rightarrow$robustez passa de 0,361 para 0,041.
+
+\begin{table}[t]
+\centering
+\caption{Baseline vs.\ proposta (F1-macro; IC 95\% por bootstrap).}
+\label{tab:main}
+\setlength{\tabcolsep}{3.5pt}
+\begin{tabular}{lcccc}
+\toprule
+ & Val. & Robustez & Queda & ECE val/rob \\
+\midrule
+Baseline (\cfg{raw}) & 0,963 & 0,602 & 0,361 & 0,017 / 0,196 \\
+Proposta (\cfg{gauss1+aug}) & 0,966 & 0,925 & 0,041 & 0,012 / 0,014 \\
+\midrule
+\multicolumn{5}{l}{\footnotesize IC val.: base [0,955; 0,970], prop.\ [0,959; 0,973]; dif.\ [$-$0,002; 0,008]}\\
+\multicolumn{5}{l}{\footnotesize IC rob.: base [0,581; 0,621], prop.\ [0,913; 0,935]; dif.\ [0,303; 0,343]}\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{f1_by_condition.png}
+\caption{F1-macro por condição: validação limpa e cada perturbação de \cfg{robustness.csv}.}
+\label{fig:cond}
+\end{figure}
+
+Por perturbação (Fig.~\ref{fig:cond}), o baseline é mais frágil a brilho/contraste (0,33) e ruído (0,38), seguido de desfoque (0,69). JPEG $q{=}35$ quase não o afeta (0,89). A proposta fica em 0,83, 0,95, 0,96 e 0,97, respectivamente.
+
+\begin{table}[t]
+\centering
+\caption{Ablação (melhor $C$ por configuração). A seleção usou apenas Val e Proxy; a coluna Rob.\ é só avaliação.}
+\label{tab:abl}
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lccc|cc}
+\toprule
+Configuração & Val & Proxy & Rob. & B/C & Ruído \\
+\midrule
+\cfg{raw} (baseline)      & 0,964 & 0,662 & 0,608 & 0,31 & 0,41 \\
+\cfg{reinhard}            & 0,955 & 0,743 & 0,651 & 0,50 & 0,43 \\
+\cfg{macenko}             & 0,890 & 0,413 & 0,332 & 0,28 & 0,08 \\
+\cfg{gauss1}              & 0,961 & 0,775 & 0,740 & 0,41 & 0,85 \\
+\cfg{median3}             & 0,965 & 0,727 & 0,698 & 0,37 & 0,74 \\
+\cfg{reinhard+gauss1}     & 0,950 & 0,859 & 0,775 & 0,58 & 0,77 \\
+\cfg{macenko+gauss1}      & 0,882 & 0,603 & 0,553 & 0,35 & 0,61 \\
+\midrule
+\cfg{raw+aug}             & 0,962 & 0,912 & 0,908 & 0,81 & 0,91 \\
+\cfg{reinhard+aug}        & 0,952 & 0,920 & 0,890 & 0,80 & 0,89 \\
+\cfg{macenko+aug}         & 0,875 & 0,748 & 0,722 & 0,59 & 0,70 \\
+\textbf{\cfg{gauss1+aug}} & \textbf{0,965} & 0,926 & \textbf{0,924} & \textbf{0,83} & \textbf{0,94} \\
+\cfg{median3+aug}         & 0,963 & 0,921 & 0,919 & 0,82 & 0,94 \\
+\cfg{reinhard+gauss1+aug} & 0,949 & \textbf{0,931} & 0,909 & 0,81 & 0,93 \\
+\cfg{macenko+gauss1+aug}  & 0,873 & 0,773 & 0,765 & 0,62 & 0,81 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{O que a ablação mostra} (Tabela~\ref{tab:abl}):
+\begin{enumerate}
+\item \emph{A aumentação é o principal fator}: só ela leva a robustez de 0,608 para 0,908, com custo nulo na validação limpa.
+\item \emph{A suavização gaussiana ajuda e é complementar}: sozinha, eleva o F1 sob ruído de 0,41 para 0,85; sobre a aumentação, acrescenta +0,016 na robustez e é a melhor configuração em desfoque, ruído e brilho/contraste.
+\item \emph{A normalização de cor não confirmou a hipótese}: Reinhard melhora a robustez a brilho/contraste quando usado sozinho (0,31$\rightarrow$0,50), mas reduz o F1 limpo em cerca de 0,01 e, combinado com aumentação, fica abaixo de \cfg{raw+aug}. Macenko piora tudo; sob ruído o F1 cai para 0,08, porque os vetores de corante estimados por percentis em densidade óptica ficam instáveis com ruído e em imagens quase sem tecido (ADI/BACK).
+\item \emph{A validação-proxy foi um bom substituto}: a correlação de Spearman entre os rankings proxy e robustez nas 14 configurações foi 0,97, contra 0,31 para a validação limpa. Selecionar só pela validação limpa teria escolhido \cfg{median3}, com F1 de robustez de 0,698.
+\end{enumerate}
+\textbf{Calibração.} O baseline fica superconfiante sob mudança de domínio (ECE de 0,017 para 0,196). A proposta permanece calibrada (0,014). Diagrama de confiabilidade no apêndice.
+
+%----------------------------------------------------------------------
+\section{Análise de erros}
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{confusion_matrices.png}
+\caption{Matrizes de confusão (contagens; cor = fração da linha).}
+\label{fig:cm}
+\end{figure}
+
+
+No baseline sob robustez (Fig.~\ref{fig:cm}), o colapso tem padrão claro. Brilho/contraste empurra ADI para BACK/DEB e LYM para BACK, e o ruído faz classes de tecido serem previstas como DEB/MUS/MUC: o ruído aumenta a variância local e desloca os histogramas LBP para padrões não uniformes, típicos de texturas granulares. A proposta elimina quase totalmente esses erros \emph{sistemáticos}. ADI e BACK passam a 0,98 e 0,99 de F1.
+
+Os erros restantes (Fig.~\ref{fig:err}) são, em sua maioria, confusões entre classes morfologicamente próximas que já existiam na validação limpa: NORM$\leftrightarrow$TUM (glândulas normais vs.\ neoplásicas), STR$\leftrightarrow$MUS (tecidos fibrosos alongados) e DEB$\leftrightarrow$STR/LYM. Brilho/contraste ainda responde pela maior parte deles: 7 dos 10 pares mais frequentes envolvem essa perturbação. A saturação em 255 é uma perda de informação \emph{não invertível}, então nenhum pré-processamento a recupera; a aumentação apenas ensina o classificador a usar as pistas que restam. Vários erros têm confiança $>0{,}95$. A boa calibração média, portanto, não impede erros individuais confiantes, o que reforça que o sistema não deve ser usado para decisão.
+
+%----------------------------------------------------------------------
+\section{Limitações}
+\begin{itemize}
+\item \textbf{Sem divisão por paciente}: o dataset não identifica o paciente de cada tile. Tiles do mesmo paciente/lâmina podem estar no treino e na validação, o que deixa as métricas otimistas. Não é uma validação clínica.
+\item \textbf{Origem única}: as imagens vêm de um único centro e protocolo. As perturbações são sintéticas e não reproduzem diferenças reais de scanner, corante ou espessura de corte; não avaliamos o conjunto externo CRC-VAL-HE-7K.
+\item \textbf{Viés de seleção}: a lista de tipos de perturbação é pública no enunciado e nossa aumentação/proxy cobre os mesmos tipos. As faixas foram fixadas sem consultar resultados de robustez, mas conhecíamos os parâmetros do manifesto. O ganho contra perturbações \emph{não previstas} pode ser menor.
+\item \textbf{Fórmula de brilho/contraste}: o manifesto não define a fórmula; adotamos $y=c\,x+255\,b$ (convenção $\alpha/\beta$ do OpenCV). Outra convenção mudaria os números dessa perturbação.
+\item Uma única seed e um único tipo de classificador; ICs por bootstrap capturam só a variação amostral da validação.
 \end{itemize}
 
-\section{Pr\'e-processamento e Normaliza\c{c}\~ao}
-\subsection{Rejei\c{c}\~ao de Fundo Vazio}
-Imagens digitalizadas frequentemente contêm por\c{c}\~oes substanciais de vidro transparente. O m\'odulo \texttt{quality} computa a m\'ascara bin\'aria de tecido avaliando a satura\c{c}\~ao HSV e lumin\^ancia m\'axima, descartando \textit{tiles} com raz\~ao tecidual inferior a 40\%.
+\section{Ética}
+Trabalho acadêmico com dados públicos e anonimizados. Não é dispositivo médico, não produz laudo e não substitui patologistas. Desempenho experimental em tiles de um único centro não implica eficácia nem segurança clínica.
 
-\subsection{Normaliza\c{c}\~ao de Colora\c{c}\~ao}
-Para atenuar a mudan\c{c}a de dom\'inio fotom\'etrico entre diferentes fontes, foram implementados:
-\begin{itemize}
-    \item \textbf{M\'etodo de Macenko et al.~\cite{macenko2009method}:} Decomposi\c{c}\~ao em Densidade \'Optica (OD) via decomposi\c{c}\~ao em valores singulares (SVD), extra\c{c}\~ao dos vetores extremos de colora\c{c}\~ao H e E e remapeamento das concentra\c{c}\~oes para uma l\^amina de refer\^encia.
-    \item \textbf{M\'etodo de Reinhard et al.~\cite{reinhard2001color}:} Transfer\^encia de m\'edia e desvio padr\~ao dos canais no espa\c{c}o de cor perceptivo $L\alpha\beta$.
-\end{itemize}
-
-\section{Modelos de Classifica\c{c}\~ao}
-\subsection{Baseline Cl\'assico}
-Extraem-se atributos artesanais baseados em:
-\begin{enumerate}
-    \item \textbf{Cor:} Histogramas de 16 faixas e momentos estat\'isticos (m\'edia, desvio padr\~ao, assimetria) nos espa\c{c}os RGB e HSV.
-    \item \textbf{Textura:} Matrizes de Co-ocorr\^encia em N\'iveis de Cinza (GLCM)~\cite{haralick1973textural} (calculando contraste, dissimilaridade, homogeneidade, energia, correla\c{c}\~ao e ASM) combinadas com histogramas de Padr\~oes Bin\'arios Locais (LBP).
-\end{enumerate}
-A classifica\c{c}\~ao \'e realizada com \textit{Random Forest} balanceado ou SVM RBF com padroniza\c{c}\~ao prévia de atributos.
-
-\subsection{Baseline Convolucional (ResNet-18)}
-Empregou-se uma arquitetura ResNet-18~\cite{he2016deep} adaptada para o n\'umero de classes do problema, com cabe\c{c}ote linear regularizado com \textit{dropout} (0.2), fun\c{c}\~ao de perda de entropia cruzada ponderada por classe, otimizador AdamW ($\eta = 3 \times 10^{-4}$) e parada antecipada (\textit{early stopping}) orientada pelo Macro-F1 na parti\c{c}\~ao de valida\c{c}\~ao.
-
-\section{Resultados e Discuss\~ao}
-Os modelos foram avaliados empregando a su\'ite do comando \texttt{pathoshift evaluate}, reportando m\'etricas por classe, Macro-F1, acur\'acia balanceada e matriz de confus\~ao normalizada. Para diagn\'ostico de falhas, o pipeline gera automaticamente uma galeria visual com os erros de maior confian\c{c}a predita, permitindo a inspe\c{c}\~ao qualitativa das causas de confus\~ao (como artefatos de corte ou dobras teciduais).
-
-\section{Reprodutibilidade e Custo Computacional}
-O comando \texttt{pathoshift describe} relata todas as vers\~oes de bibliotecas, sistema operacional Linux (kernel 6.6) e presen\c{c}a de acelera\c{c}\~ao por hardware GPU (NVIDIA GeForce RTX 3050, 6GB VRAM, CUDA 12.4). O tempo de execu\c{c}\~ao e sementes determin\'isticas s\~ao persistidos em \texttt{outputs/training\_history.json}.
-
-\section{Aviso \'Etico}
-Este software foi desenvolvido com finalidade estritamente acad\^emica e de pesquisa experimental em processamento de imagens. N\~ao possui finalidade diagn\'ostica, terap\^eutica ou de suporte a decis\~ao cl\'inica.
+%----------------------------------------------------------------------
+\section{AI-Assisted Engineering}
+Usamos o assistente de programação \emph{Claude Code} (Anthropic, modelo Claude Opus) para adaptar o código da Entrega 1 ao novo protocolo, escrever os módulos de perturbação, seleção e figuras, depurar (por exemplo, o NaN na assimetria de imagens saturadas) e redigir uma primeira versão deste relatório e do README. O assistente executou o código localmente na máquina do grupo; nenhum modelo pré-treinado externo e nenhum serviço remoto de inferência foram usados no pipeline. Figuras com tiles públicos da validação foram visualizadas na sessão do assistente para inspeção. \textbf{Verificação}: testes unitários (17, incluindo determinismo das perturbações, contrato do CSV e regressão do NaN em imagens saturadas); validação dos CSVs pelo avaliador oficial (métricas idênticas às do nosso código); reexecução independente da inferência com resultado idêntico; inspeção visual das perturbações e dos erros; revisão manual do código e dos números pelo grupo. Cada integrante é responsável por explicar as decisões aqui descritas.
 
 \bibliographystyle{IEEEtran}
 \bibliography{references}
+
+\appendix
+\section*{Apêndice técnico}
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.48\linewidth]{calibration.png}\hfill
+\includegraphics[width=0.5\linewidth]{class_distribution.png}
+\caption{Calibração da proposta (esq.) e distribuição de classes (dir.).}
+\end{figure}
+\begin{figure}[h]
+\centering
+\includegraphics[width=\linewidth]{f1_per_class.png}
+\caption{F1 por classe na robustez (barras) e na validação limpa (traço).}
+\end{figure}
+\begin{figure}[h]
+\centering
+\includegraphics[width=\linewidth]{ablation.png}
+\caption{Ablação completa.}
+\end{figure}
+\begin{figure*}[h]
+\centering
+\includegraphics[width=0.8\linewidth]{fixed_by_proposal.jpg}
+\caption{Exemplos em que o baseline errou e a proposta acertou.}
+\end{figure*}
 
 \end{document}

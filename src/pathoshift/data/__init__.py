@@ -1,6 +1,9 @@
 """Data handling, manifest generation, splits, and PyTorch dataset."""
 
-from pathoshift.data.dataset import PathologyDataset
+try:  # PyTorch é opcional
+    from pathoshift.data.dataset import PathologyDataset
+except ImportError:  # pragma: no cover
+    PathologyDataset = None
 from pathoshift.data.manifest import (
     build_manifest,
     load_manifest,
