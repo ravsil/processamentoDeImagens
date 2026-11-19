@@ -29,9 +29,34 @@ def parse_parameters(text: str) -> Dict[str, float]:
 
 
 # ---------------------------------------------------------------- primitivas
-def brightness_contrast(img: np.ndarray, brightness: float, contrast: float) -> np.ndarray:
-    """y = contrast * x + brightness * 255 (convenção alpha/beta do OpenCV/Albumentations)."""
-    y = img.astype(np.float32) * contrast + brightness * 255.0
+BRIGHTNESS_CONTRAST_FORMULAS = ("A", "B", "C", "D")
+
+
+def brightness_contrast(img: np.ndarray, brightness: float, contrast: float, formula: str = "A") -> np.ndarray:
+    """Aplica variação de brilho e contraste segundo uma das convenções possíveis.
+
+    Fórmulas (x em [0, 255]):
+      A: y = c * x + 255 * b                        (OpenCV / Albumentations alpha/beta — padrão)
+      B: y = (x - 128) * c + 128 + 255 * b          (contraste centrado no cinza médio 128)
+      C: y = (x - mu) * c + mu + 255 * b            (contraste centrado na média da imagem)
+      D: x1 = clip(x * (1 + b)); y = (x1 - mu1) * c + mu1  (brilho multiplicativo + contraste estilo PIL/torchvision)
+    """
+    x = img.astype(np.float32)
+    b = float(brightness)
+    c = float(contrast)
+    if formula == "A":
+        y = x * c + b * 255.0
+    elif formula == "B":
+        y = (x - 128.0) * c + 128.0 + b * 255.0
+    elif formula == "C":
+        mu = float(x.mean())
+        y = (x - mu) * c + mu + b * 255.0
+    elif formula == "D":
+        x1 = np.clip(np.rint(x * (1.0 + b)), 0, 255).astype(np.uint8)
+        mu1 = float(cv2.cvtColor(x1, cv2.COLOR_RGB2GRAY).mean())
+        y = (x1.astype(np.float32) - mu1) * c + mu1
+    else:
+        raise ValueError(f"Fórmula de brightness_contrast desconhecida: {formula}")
     return np.clip(np.rint(y), 0, 255).astype(np.uint8)
 
 
@@ -61,12 +86,18 @@ def hsv_jitter(img: np.ndarray, hue_shift: float, sat_scale: float) -> np.ndarra
 
 
 # ------------------------------------------------------- manifesto oficial
-def apply_manifest_perturbation(img: np.ndarray, perturbation: str, parameters: str, seed: int) -> np.ndarray:
+def apply_manifest_perturbation(
+    img: np.ndarray,
+    perturbation: str,
+    parameters: str,
+    seed: int,
+    bc_formula: str = "A",
+) -> np.ndarray:
     """Aplica a perturbação de uma linha de robustness.csv (determinística)."""
     p = parse_parameters(parameters)
     rng = np.random.default_rng(int(seed))
     if perturbation == "brightness_contrast":
-        return brightness_contrast(img, p["brightness"], p["contrast"])
+        return brightness_contrast(img, p["brightness"], p["contrast"], formula=bc_formula)
     if perturbation == "jpeg":
         return jpeg_compress(img, int(p["quality"]))
     if perturbation == "gaussian_blur":

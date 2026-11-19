@@ -181,7 +181,7 @@ Os erros restantes (Fig.~\ref{fig:err}) são, em sua maioria, confusões entre c
 \item \textbf{Sem divisão por paciente}: o dataset não identifica o paciente de cada tile. Tiles do mesmo paciente/lâmina podem estar no treino e na validação, o que deixa as métricas otimistas. Não é uma validação clínica.
 \item \textbf{Origem única}: as imagens vêm de um único centro e protocolo. As perturbações são sintéticas e não reproduzem diferenças reais de scanner, corante ou espessura de corte; não avaliamos o conjunto externo CRC-VAL-HE-7K.
 \item \textbf{Viés de seleção}: a lista de tipos de perturbação é pública no enunciado e nossa aumentação/proxy cobre os mesmos tipos. As faixas foram fixadas sem consultar resultados de robustez, mas conhecíamos os parâmetros do manifesto. O ganho contra perturbações \emph{não previstas} pode ser menor.
-\item \textbf{Fórmula de brilho/contraste}: o manifesto não define a fórmula; adotamos $y=c\,x+255\,b$ (convenção $\alpha/\beta$ do OpenCV). Outra convenção mudaria os números dessa perturbação.
+\item \textbf{Fórmula de brilho/contraste}: o manifesto não explicita a equação de \cfg{brightness\_contrast} ($b{=}0{,}15$, $c{=}1{,}20$); adotamos a convenção $\alpha/\beta$ do OpenCV/Albumentations (fórmula A: $y=\operatorname{clip}(c\,x+255\,b)$) nos CSVs entregues e na aumentação de treino. Para medir o impacto dessa suposição \emph{sem retreino} (mantendo o modelo fixo treinado com A), avaliamos os 563 tiles dessa perturbação sob três leituras alternativas: contraste centrado em 128 (B: $(x{-}128)c+128+255b$), centrado na média $\mu$ da imagem (C: $(x{-}\mu)c+\mu+255b$) e brilho multiplicativo seguido de contraste estilo PIL/torchvision (D: $x_1=\operatorname{clip}((1{+}b)x)$, $(x_1{-}\mu_1)c+\mu_1$). A fórmula A é o caso mais severo de saturação (95,8\% dos pixels de ADI estouram em 255, contra 87,1--92,5\% em B--D): o F1-macro no subconjunto de brilho/contraste varia de 0,329 (A) a 0,336--0,537 (B--D) no baseline, mas sobe de 0,830 (A) para 0,843--0,896 (B--D) na proposta (F1 de robustez total de 0,925 em A e 0,929--0,941 em B--D; Tabela~\ref{tab:sens} no apêndice). Logo, a conclusão é invariante à convenção adotada, mesmo quando a fórmula do teste difere da usada na aumentação.
 \item Uma única seed e um único tipo de classificador; ICs por bootstrap capturam só a variação amostral da validação.
 \end{itemize}
 
@@ -190,13 +190,29 @@ Trabalho acadêmico com dados públicos e anonimizados. Não é dispositivo méd
 
 %----------------------------------------------------------------------
 \section{AI-Assisted Engineering}
-Usamos o assistente de programação \emph{Claude Code} (Anthropic, modelo Claude Opus) para adaptar o código da Entrega 1 ao novo protocolo, escrever os módulos de perturbação, seleção e figuras, depurar (por exemplo, o NaN na assimetria de imagens saturadas) e redigir uma primeira versão deste relatório e do README. O assistente executou o código localmente na máquina do grupo; nenhum modelo pré-treinado externo e nenhum serviço remoto de inferência foram usados no pipeline. Figuras com tiles públicos da validação foram visualizadas na sessão do assistente para inspeção. \textbf{Verificação}: testes unitários (17, incluindo determinismo das perturbações, contrato do CSV e regressão do NaN em imagens saturadas); validação dos CSVs pelo avaliador oficial (métricas idênticas às do nosso código); reexecução independente da inferência com resultado idêntico; inspeção visual das perturbações e dos erros; revisão manual do código e dos números pelo grupo. Cada integrante é responsável por explicar as decisões aqui descritas.
+Usamos assistentes de programação baseados em modelos da Anthropic (\emph{Claude}) e do Google (\emph{Gemini}) para adaptar o código da Entrega 1 ao novo protocolo, escrever os módulos de perturbação, seleção, sensibilidade e figuras, depurar (por exemplo, o NaN na assimetria de imagens saturadas, o pino de versão do OpenCV e o bloqueio de \emph{fork} do OpenCV no Linux) e redigir versões preliminares deste relatório e do README. O código foi executado localmente nas máquinas do grupo (Windows 11 e Linux); nenhum modelo pré-treinado externo e nenhum serviço remoto de inferência foram usados no pipeline. Figuras com tiles públicos da validação foram visualizadas na sessão do assistente para inspeção. \textbf{Verificação}: testes unitários (18, incluindo determinismo das perturbações, fórmulas A--D de brilho/contraste, contrato do CSV e regressão do NaN em imagens saturadas); validação dos CSVs pelo avaliador oficial \cfg{evaluate\_pathoshift\_crc.mjs} (métricas idênticas às do nosso código); reexecução independente em segunda máquina (Linux) reproduzindo os resultados; análise de sensibilidade às convenções de brilho/contraste; inspeção visual das perturbações e dos erros; revisão manual do código e dos números pelo grupo. Cada integrante é responsável por explicar as decisões aqui descritas.
 
 \bibliographystyle{IEEEtran}
 \bibliography{references}
 
 \appendix
 \section*{Apêndice técnico}
+\begin{table}[h]
+\centering
+\caption{Sensibilidade à fórmula de \cfg{brightness\_contrast} ($b{=}0{,}15$, $c{=}1{,}20$) sem retreino (modelos congelados treinados com A).}
+\label{tab:sens}
+\setlength{\tabcolsep}{2.5pt}
+\begin{tabular}{lccccc}
+\toprule
+Fórmula & Sat.\ ADI/BACK & Base B/C & Prop.\ B/C & Base Rob. & Prop.\ Rob. \\
+\midrule
+A ($c\,x+255b$) & 95,8 / 99,7\% & 0,329 & \textbf{0,830} & 0,602 & \textbf{0,925} \\
+B (centro 128) & 92,5 / 99,4\% & 0,482 & \textbf{0,896} & 0,635 & \textbf{0,941} \\
+C (centro $\mu$) & 87,8 / 98,1\% & 0,537 & \textbf{0,890} & 0,649 & \textbf{0,940} \\
+D (mult.+PIL) & 87,1 / 97,5\% & 0,336 & \textbf{0,843} & 0,607 & \textbf{0,929} \\
+\bottomrule
+\end{tabular}
+\end{table}
 \begin{figure}[h]
 \centering
 \includegraphics[width=0.48\linewidth]{calibration.png}\hfill

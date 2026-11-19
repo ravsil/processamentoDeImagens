@@ -70,10 +70,12 @@ Implementadas em `src/pathoshift/preprocessing/perturbations.py`, determinístic
 
 | tipo | parâmetros | implementação |
 |---|---|---|
-| `brightness_contrast` | brightness=0.15; contrast=1.20 | `y = clip(contrast·x + 255·brightness)` (convenção α/β do OpenCV/Albumentations) |
+| `brightness_contrast` | brightness=0.15; contrast=1.20 | `y = clip(contrast·x + 255·brightness)` (convenção α/β do OpenCV/Albumentations — fórmula A) |
 | `jpeg` | quality=35 | codificação/decodificação JPEG com Pillow |
 | `gaussian_blur` | sigma=1.2 | `cv2.GaussianBlur`, kernel automático, borda reflect-101 |
 | `gaussian_noise` | stddev=12 | `x + N(0, 12)` com `numpy.random.default_rng(seed)`, arredondado e recortado em [0, 255] |
+
+**Sensibilidade à fórmula de `brightness_contrast` (sem retreino):** como o manifesto não especifica a equação exata de `brightness_contrast`, o subcomando `python -m pathoshift.challenge sensitivity` avalia os modelos congelados (treinados com a fórmula A) sob quatro convenções possíveis: **A** (`c·x + 255·b`, padrão nos CSVs entregues), **B** (`(x − 128)·c + 128 + 255·b`), **C** (`(x − μ)·c + μ + 255·b`) e **D** (brilho multiplicativo `1.15·x` seguido de contraste `×1.2` estilo PIL/torchvision). A fórmula A é o caso mais severo de saturação em 255 (95,8% dos pixels em ADI); nas leituras B, C e D o F1-macro da proposta no subconjunto `brightness_contrast` sobe de **0.830** (A) para **0.896** (B), **0.890** (C) e **0.843** (D) (F1-macro de robustez global de **0.925** em A e **0.929–0.941** em B–D, contra **0.602–0.649** do baseline).
 
 ## Instalação
 
@@ -100,7 +102,9 @@ python -m pathoshift.challenge features   --data-root ../dados --output outputs 
 python -m pathoshift.challenge eda        --data-root ../dados --output outputs --jobs 8
 # 3) grade/seleção na validação, modelos finais, robustez, figuras e CSVs oficiais
 python -m pathoshift.challenge experiment --data-root ../dados --output outputs --deliverable-dir .
-# 4) avaliador oficial
+# 4) análise de sensibilidade às convenções A/B/C/D de brightness_contrast (sem retreino)
+python -m pathoshift.challenge sensitivity --data-root ../dados --output outputs --jobs 8
+# 5) avaliador oficial
 node ../kit/evaluate_pathoshift_crc.mjs --manifest ../dados/manifests/validation.csv --predictions predictions_validation.csv --output outputs/results/eval_validation.json
 node ../kit/evaluate_pathoshift_crc.mjs --manifest ../dados/manifests/robustness.csv  --predictions predictions_robustness.csv  --output outputs/results/eval_robustness.json
 ```

@@ -69,8 +69,11 @@ def _out(path: Path) -> Path:
 def compute_reinhard_target(data_root: Path, train: pd.DataFrame, per_class: int = 100) -> dict:
     """Estatísticas LAB de referência = média das estatísticas de 900 imagens de TREINO."""
     import cv2
+    cv2.setNumThreads(1)
     sample = train.groupby("label", group_keys=False).apply(
-        lambda d: d.sample(n=min(per_class, len(d)), random_state=SEED))
+        lambda d: d.sample(n=min(per_class, len(d)), random_state=SEED),
+        include_groups=False,
+    )
     means, stds = [], []
     for p in sample.image_path:
         lab = cv2.cvtColor(read_tile(data_root, p), cv2.COLOR_RGB2LAB).astype(np.float32)
@@ -116,7 +119,13 @@ def _load_input(task: dict) -> np.ndarray:
     img = read_tile(_W["root"], task["image_path"])
     mode = task["mode"]
     if mode == "manifest":
-        img = apply_manifest_perturbation(img, task["perturbation"], task["parameters"], int(task["seed"]))
+        img = apply_manifest_perturbation(
+            img,
+            task["perturbation"],
+            task["parameters"],
+            int(task["seed"]),
+            bc_formula=task.get("bc_formula", "A"),
+        )
     elif mode == "random":
         img = random_acquisition_shift(img, np.random.default_rng(int(task["seed"])))
     return img
@@ -127,12 +136,12 @@ def _worker(task: dict) -> Dict[str, np.ndarray]:
     return {k: _W["fx"].extract_all(pre(img)) for k, pre in _W["pre"].items()}
 
 
-def build_tasks(df: pd.DataFrame, mode: str, seed_base: int = 0) -> List[dict]:
+def build_tasks(df: pd.DataFrame, mode: str, seed_base: int = 0, bc_formula: str = "A") -> List[dict]:
     tasks = []
     for i, r in enumerate(df.itertuples(index=False)):
         t = {"image_path": r.image_path, "mode": mode}
         if mode == "manifest":
-            t.update(perturbation=r.perturbation, parameters=r.parameters, seed=r.seed)
+            t.update(perturbation=r.perturbation, parameters=r.parameters, seed=r.seed, bc_formula=bc_formula)
         elif mode == "random":
             t["seed"] = seed_base + i
         tasks.append(t)
@@ -380,6 +389,165 @@ def write_markdown_summary(summary: dict, ablation: pd.DataFrame, path: Path) ->
     path.write_text("\n".join(L) + "\n", encoding="utf-8")
 
 
+# ============================================================ sensibilidade (brightness_contrast A/B/C/D)
+def cmd_sensitivity(args) -> None:
+    """Análise de sensibilidade às convenções A/B/C/D de brightness_contrast (sem retreino nem seleção)."""
+    from pathoshift.preprocessing.perturbations import BRIGHTNESS_CONTRAST_FORMULAS, brightness_contrast
+
+    data_root, out = Path(args.data_root), Path(args.output)
+    feat_dir, res_dir, mod_dir = _out(out / "features"), _out(out / "results"), _out(out / "models")
+    m = load_official_manifests(_manifest_dir(data_root))
+    target_file = feat_dir / "reinhard_target.json"
+    if not target_file.exists():
+        target_file.write_text(json.dumps(compute_reinhard_target(data_root, m["train"]), indent=2))
+    target = json.loads(target_file.read_text())
+
+    # 1) Garante os atributos das variantes do baseline (raw) e da proposta (gauss1)
+    needed_variants = {"raw": VARIANTS["raw"], "gauss1": VARIANTS["gauss1"]}
+    all_tasks = split_tasks(m)
+    for set_name, variants_for_set in (
+        ("train", needed_variants),
+        ("train_aug", {"gauss1": VARIANTS["gauss1"]}),
+        ("validation", needed_variants),
+        ("robustness", needed_variants),
+    ):
+        missing = {k: v for k, v in variants_for_set.items() if not (feat_dir / f"{set_name}__{k}.npy").exists() or args.force}
+        if missing:
+            print(f"[sensitivity] extraindo {set_name}: {list(missing)}")
+            feats = extract_features(all_tasks[set_name], data_root, missing, target, args.jobs)
+            for k, arr in feats.items():
+                np.save(feat_dir / f"{set_name}__{k}.npy", arr)
+
+    # 2) Carrega ou treina os modelos congelados (baseline: raw C=10; proposta: gauss1+aug C=10)
+    y_tr = m["train"].label.map(CLASS_TO_IDX).values
+    y_va = m["validation"].label.map(CLASS_TO_IDX).values
+    y_rb = m["robustness"].label.map(CLASS_TO_IDX).values
+
+    models = {}
+    specs = {
+        "baseline": {"config": "raw", "variant": "raw", "augmentation": False, "C": 10.0},
+        "proposal": {"config": "gauss1+aug", "variant": "gauss1", "augmentation": True, "C": 10.0},
+    }
+    for role, sel in specs.items():
+        mpath = mod_dir / f"{role}.joblib"
+        if mpath.exists() and not args.force:
+            models[role] = joblib.load(mpath)["model"]
+        else:
+            X = load_feats(out, "train", sel["variant"])
+            y = y_tr
+            if sel["augmentation"]:
+                X = np.vstack([X, load_feats(out, "train_aug", sel["variant"])])
+                y = np.concatenate([y_tr, y_tr])
+            print(f"[sensitivity] treinando {role} ({sel['config']}, C={sel['C']})...")
+            model = make_model(sel["C"], probability=True).fit(X, y)
+            bundle = {
+                "model": model,
+                "preproc": VARIANTS[sel["variant"]].to_dict(),
+                "reinhard_target": target,
+                "classes": CLASSES,
+                "selection": sel,
+            }
+            joblib.dump(bundle, mpath, compress=3)
+            models[role] = model
+
+    # 3) Extrai atributos dos 563 tiles de brightness_contrast sob as fórmulas A, B, C e D
+    rob = m["robustness"]
+    bc_mask = (rob.perturbation == "brightness_contrast").values
+    bc_df = rob[bc_mask].reset_index(drop=True)
+    y_bc = y_rb[bc_mask]
+
+    # Estatísticas de saturação em 255 por fórmula para ADI e BACK
+    sat_stats = {f: {"ADI": [], "BACK": [], "all": []} for f in BRIGHTNESS_CONTRAST_FORMULAS}
+    for r in bc_df.itertuples(index=False):
+        tile = read_tile(data_root, r.image_path)
+        for f in BRIGHTNESS_CONTRAST_FORMULAS:
+            pert_im = brightness_contrast(tile, 0.15, 1.20, formula=f)
+            frac255 = float((pert_im == 255).mean())
+            sat_stats[f]["all"].append(frac255)
+            if r.label in ("ADI", "BACK"):
+                sat_stats[f][r.label].append(frac255)
+
+    base_feats_va = {v: load_feats(out, "validation", v) for v in ("raw", "gauss1")}
+    base_feats_rb = {v: load_feats(out, "robustness", v) for v in ("raw", "gauss1")}
+    f1_va = {
+        role: macro_f1(y_va, models[role].predict_proba(base_feats_va[specs[role]["variant"]]).argmax(1))
+        for role in ("baseline", "proposal")
+    }
+
+    results = {"validation_f1_macro": f1_va, "formulas": {}}
+    for f in BRIGHTNESS_CONTRAST_FORMULAS:
+        if f == "A":
+            bc_feats = {v: base_feats_rb[v][bc_mask] for v in ("raw", "gauss1")}
+        else:
+            cache_raw = feat_dir / f"robustness_bc_{f}__raw.npy"
+            cache_g1 = feat_dir / f"robustness_bc_{f}__gauss1.npy"
+            if cache_raw.exists() and cache_g1.exists() and not args.force:
+                bc_feats = {"raw": np.load(cache_raw), "gauss1": np.load(cache_g1)}
+            else:
+                print(f"[sensitivity] extraindo 563 tiles brightness_contrast com fórmula {f}...")
+                bc_feats = extract_features(
+                    build_tasks(bc_df, "manifest", bc_formula=f),
+                    data_root,
+                    needed_variants,
+                    target,
+                    args.jobs,
+                )
+                np.save(cache_raw, bc_feats["raw"])
+                np.save(cache_g1, bc_feats["gauss1"])
+
+        f_entry = {
+            "fraction_pixels_255": {
+                k: round(float(np.mean(v)), 4) for k, v in sat_stats[f].items()
+            },
+            "models": {},
+        }
+        for role, sel in specs.items():
+            v = sel["variant"]
+            X_full = base_feats_rb[v].copy()
+            X_full[bc_mask] = bc_feats[v]
+            pred_bc = models[role].predict_proba(bc_feats[v]).argmax(1)
+            pred_full = models[role].predict_proba(X_full).argmax(1)
+            m_bc = full_metrics(y_bc, pred_bc)
+            m_full = full_metrics(y_rb, pred_full)
+            f_entry["models"][role] = {
+                "f1_macro_bc_subset": round(m_bc["f1_macro"], 4),
+                "f1_ADI_bc_subset": round(m_bc["by_class"]["ADI"]["f1"], 4),
+                "f1_BACK_bc_subset": round(m_bc["by_class"]["BACK"]["f1"], 4),
+                "f1_macro_full_robustness": round(m_full["f1_macro"], 4),
+                "f1_drop_from_validation": round(f1_va[role] - m_full["f1_macro"], 4),
+            }
+        results["formulas"][f] = f_entry
+
+    (res_dir / "sensitivity_brightness_contrast.json").write_text(json.dumps(results, indent=2))
+
+    lines = [
+        "# Sensibilidade à fórmula de `brightness_contrast` (b=0.15, c=1.20)\n",
+        "Modelos avaliados **sem retreino** (aumentação de treino da proposta fixada na fórmula A):\n",
+        "| Fórmula | Definição | % pixels=255 (ADI / BACK) | Baseline F1 (B/C) | Proposta F1 (B/C) | Baseline F1 (Rob. total) | Proposta F1 (Rob. total) | Queda Proposta |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
+    defs = {
+        "A": "`clip(1.2·x + 38.25)` (OpenCV/Albumentations — padrão)",
+        "B": "`clip((x - 128)·1.2 + 128 + 38.25)` (centro em 128)",
+        "C": "`clip((x - μ)·1.2 + μ + 38.25)` (centro na média da imagem)",
+        "D": "`x1=clip(1.15·x); clip((x1 - μ1)·1.2 + μ1)` (estilo PIL/torchvision)",
+    }
+    for f in BRIGHTNESS_CONTRAST_FORMULAS:
+        e = results["formulas"][f]
+        s = e["fraction_pixels_255"]
+        mb, mp = e["models"]["baseline"], e["models"]["proposal"]
+        lines.append(
+            f"| **{f}** | {defs[f]} | {100*s['ADI']:.1f}% / {100*s['BACK']:.1f}% | "
+            f"{mb['f1_macro_bc_subset']:.4f} (ADI {mb['f1_ADI_bc_subset']:.2f}, BACK {mb['f1_BACK_bc_subset']:.2f}) | "
+            f"**{mp['f1_macro_bc_subset']:.4f}** (ADI {mp['f1_ADI_bc_subset']:.2f}, BACK {mp['f1_BACK_bc_subset']:.2f}) | "
+            f"{mb['f1_macro_full_robustness']:.4f} | **{mp['f1_macro_full_robustness']:.4f}** | "
+            f"{mp['f1_drop_from_validation']:.4f} |"
+        )
+    md_text = "\n".join(lines) + "\n"
+    (res_dir / "sensitivity_brightness_contrast.md").write_text(md_text, encoding="utf-8")
+    print(md_text)
+
+
 # ============================================================ predição (inferência)
 def cmd_predict(args) -> None:
     """Inferência reprodutível: modelo salvo + manifesto -> CSV no contrato oficial."""
@@ -400,7 +568,7 @@ def cmd_predict(args) -> None:
 # ============================================================ main
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("command", choices=["eda", "features", "experiment", "predict", "all"])
+    ap.add_argument("command", choices=["eda", "features", "experiment", "predict", "sensitivity", "all"])
     ap.add_argument("--data-root", required=True, help="raiz do pacote de imagens (contém manifests/ e NCT-CRC-HE-100K-NONORM/)")
     ap.add_argument("--output", default="outputs")
     ap.add_argument("--deliverable-dir", default=".", help="onde gravar predictions_*.csv oficiais")
@@ -421,6 +589,8 @@ def main(argv=None):
         cmd_experiment(args)
     if args.command == "predict":
         cmd_predict(args)
+    if args.command == "sensitivity":
+        cmd_sensitivity(args)
 
 
 if __name__ == "__main__":

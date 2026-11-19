@@ -80,3 +80,18 @@ def test_features_finite_on_saturated_image():
 
     feats = HistopathologyFeatureExtractor().extract_all(saturated)
     assert np.isfinite(feats).all()
+
+
+def test_brightness_contrast_formulas():
+    from pathoshift.preprocessing.perturbations import BRIGHTNESS_CONTRAST_FORMULAS, brightness_contrast
+
+    img = _img(42)
+    outputs = {}
+    for f in BRIGHTNESS_CONTRAST_FORMULAS:
+        out = brightness_contrast(img, 0.15, 1.20, formula=f)
+        assert out.shape == img.shape and out.dtype == np.uint8
+        outputs[f] = out
+    # As fórmulas devem produzir resultados distintos em imagens com variância não nula
+    assert not np.array_equal(outputs["A"], outputs["B"])
+    assert not np.array_equal(outputs["A"], outputs["C"])
+    assert not np.array_equal(outputs["A"], outputs["D"])
