@@ -6,11 +6,12 @@ This document serves as the high-level operational guide for AI agents working w
 
 ## 1. Project Overview
 
-- **Challenge**: PathoShift Challenge — Robust Histopathology Image Processing & Classification (UFRRJ).
-- **Core Problem**: Build an end-to-end, reproducible pipeline for classifying microscopic H&E tiles under domain shifts (stain variations, focus defects, scanner differences).
-- **Current Milestone**: **Entrega 1 — Pathology Image Pipeline**.
+- **Challenge**: PathoShift-CRC Mini Challenge — Robust Histopathology Image Processing & Classification (UFRRJ).
+- **Core Problem**: Build an end-to-end, reproducible CPU-executable pipeline for classifying 224×224 H&E colorectal tissue tiles (9 classes from `NCT-CRC-HE-100K-NONORM`: `ADI`, `BACK`, `DEB`, `LYM`, `MUC`, `MUS`, `NORM`, `STR`, `TUM`) under acquisition shifts (`brightness_contrast`, `jpeg`, `gaussian_blur`, `gaussian_noise`).
+- **Current Milestone**: **Entrega Final — PathoShift-CRC Official Protocol & Robustness Evaluation** (reusing Entrega 1 baseline).
 - **Package**: `pathoshift` (installable via `pip install -e .`).
-- **Primary CLI**: `pathoshift [prepare | eda | train | predict | evaluate | describe]`.
+- **Primary Final CLI**: `python -m pathoshift.challenge [eda | features | experiment | predict | sensitivity | all]`.
+- **Legacy Entrega 1 CLI**: `pathoshift [prepare | eda | train | predict | evaluate | describe]`.
 
 ---
 
@@ -48,8 +49,24 @@ Detailed procedures are modularized into workspace skills:
 
 ## 5. Golden Rules for Agents
 
-1. **No Data Leakage**: Never evaluate or choose hyperparameters on the test split. Always use patient-aware grouping when patient/slide IDs exist.
-2. **Deterministic Seeding**: Always pass and set the random seed (`set_seed(config['seed'])`) across Python `random`, `numpy`, and `torch`.
-3. **Reproducibility Tracking**: Document package versions, environment details, and execution wall-clock time in output logs (`training_history.json`).
-4. **Code Quality**: Always run `pytest tests/` after modifying core data, model, or evaluation logic.
+1. **No Data Leakage**: Train exclusively on `train.csv` (9,000 tiles). Select configuration and hyperparameters ($C$) exclusively on `validation.csv` (clean + `validation_proxy` generated with independent seed `2000·10⁵ + i`) and freeze `outputs/results/selection.json` before evaluating `robustness.csv`. Never retrain or tune on `robustness.csv`.
+2. **Deterministic Seeding**: Use global seed `42`, per-row deterministic augmentation/proxy seeds (`1000·10⁵ + i` and `2000·10⁵ + i`), and manifest-provided seeds for `robustness.csv`.
+3. **Linux Multiprocessing Safety**: Always call `cv2.setNumThreads(1)` before invoking OpenCV functions in the parent process prior to `multiprocessing.Pool` creation to avoid Linux `fork()` pthreads deadlocks.
+4. **Code Quality**: Always run `pytest tests/` (18 unit tests) and validate `predictions_validation.csv` / `predictions_robustness.csv` with `node evaluate_pathoshift_crc.mjs`.
 5. **Ethical Disclaimer**: Never produce or suggest clinical diagnostic claims; this system is strictly for experimental computer vision research.
+
+---
+
+## 6. Design Decisions & Resolved Questions
+
+### `brightness_contrast` Perturbation Formula Strategy (`robustness.csv`)
+- **Context**: `robustness.csv` specifies `perturbation=brightness_contrast` with `parameters="brightness=0.15;contrast=1.20"`, without stating the algebraic equation. Because `ADI` and `BACK` tiles are near-white (~240 intensity), additive brightness clips pixels at 255 and erases fine membrane structures.
+- **Candidate Formulas (`src/pathoshift/preprocessing/perturbations.py`)**:
+  - **A (Official default — OpenCV/Albumentations $\alpha/\beta$)**: $y = \operatorname{clip}(\operatorname{round}(1.2\,x + 0.15\cdot 255),\, 0, 255)$
+  - **B (Contrast centered at mid-gray 128)**: $y = \operatorname{clip}(\operatorname{round}((x - 128)\cdot 1.2 + 128 + 0.15\cdot 255),\, 0, 255)$
+  - **C (Contrast centered at per-image mean $\mu$)**: $y = \operatorname{clip}(\operatorname{round}((x - \mu)\cdot 1.2 + \mu + 0.15\cdot 255),\, 0, 255)$
+  - **D (Multiplicative brightness + PIL/torchvision contrast)**: $x_1 = \operatorname{clip}(\operatorname{round}(1.15\,x),\, 0, 255)$, $y = \operatorname{clip}(\operatorname{round}((x_1 - \mu_1)\cdot 1.2 + \mu_1),\, 0, 255)$
+- **Decided Strategy**:
+  1. **Keep Formula A** for the delivered `predictions_robustness.csv` and for training augmentation (`random_acquisition_shift`).
+  2. **Sensitivity Analysis Without Retraining (`python -m pathoshift.challenge sensitivity`)**: Evaluate the already-trained frozen baseline (`raw`, $C=10$) and proposal (`gauss1+aug`, $C=10$, trained only with formula A) on the 563 `brightness_contrast` validation tiles under formulas A, B, C, and D. This obeys the no-tuning rule on `robustness.csv` while turning the formula assumption into a measured limitation in the report (Section VIII & Appendix Table III).
+  3. **Measured Outcome**: Formula A is the worst-case clipping regime (95.8% of `ADI` and 99.7% of `BACK` pixels clip at 255). Even without retraining, the proposal's F1-macro on the `brightness_contrast` subset rises from **0.830** (A) to **0.896** (B), **0.890** (C), and **0.843** (D) (overall robustness F1-macro **0.925** in A vs. **0.929–0.941** in B–D, compared to **0.602–0.649** for the baseline).

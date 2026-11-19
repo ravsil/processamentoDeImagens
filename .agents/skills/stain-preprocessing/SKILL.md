@@ -71,3 +71,14 @@ preprocessing:
     method: "macenko"    # "macenko" or "reinhard"
 ```
 Always report baseline performance **with vs. without** stain normalization to satisfy the course requirement of an **experimentally justified preprocessing choice**.
+
+## 5. Robustness Perturbations & `brightness_contrast` Formula Strategy (`src/pathoshift/preprocessing/perturbations.py`)
+
+In the final **PathoShift-CRC** challenge, `robustness.csv` applies four deterministic perturbations (`brightness_contrast`, `jpeg`, `gaussian_blur`, `gaussian_noise`).
+- Because the specification does not state the exact algebraic formula for `brightness_contrast` (`brightness=0.15;contrast=1.20`), our decided strategy is:
+  1. **Official Default (Formula A)**: Use the OpenCV/Albumentations $\alpha/\beta$ convention $y = \operatorname{clip}(\operatorname{round}(1.2\,x + 255\cdot 0.15),\, 0, 255)$ for `predictions_robustness.csv` and training augmentation (`random_acquisition_shift`).
+  2. **No-Retraining Sensitivity Check (Formulas B, C, D)**: Use `brightness_contrast(img, b, c, formula=...)` (`"A"`, `"B"`, `"C"`, `"D"`) via `python -m pathoshift.challenge sensitivity` to evaluate the frozen models trained with A under:
+     - **B**: contrast centered at 128: $(x - 128)\cdot 1.2 + 128 + 255\cdot 0.15$
+     - **C**: contrast centered at image mean $\mu$: $(x - \mu)\cdot 1.2 + \mu + 255\cdot 0.15$
+     - **D**: multiplicative brightness $x_1 = \operatorname{clip}(1.15\,x)$ followed by PIL/torchvision contrast $(x_1 - \mu_1)\cdot 1.2 + \mu_1$
+  3. Formula A is the most severe saturation regime (95.8% of `ADI` pixels clip at 255); under B–D, the proposal (`gauss1+aug`) achieves even higher F1-macro on the `brightness_contrast` subset (`0.843–0.896` vs `0.830` under A, and `0.929–0.941` overall robustness F1-macro vs `0.925` under A).

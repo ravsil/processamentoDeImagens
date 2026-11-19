@@ -82,3 +82,31 @@ pathoshift evaluate --input outputs/manifest.jsonl --predictions outputs/predict
 - Run automated tests: `pytest tests/`
 - Ensure DataLoader `num_workers=0` on small datasets or WSL2 environments to avoid IPC worker deadlocks.
 - Ensure CUDA is available via `torch.cuda.is_available()` (system has NVIDIA GeForce RTX 3050).
+
+---
+
+## Final Challenge Protocol (`pathoshift.challenge`)
+
+For the official **PathoShift-CRC** submission (`train.csv`, `validation.csv`, `robustness.csv`), use `python -m pathoshift.challenge`:
+
+```bash
+# 1. Extract 152-D features for all 7 preprocessing variants
+python -m pathoshift.challenge features --data-root data/dados --output outputs --jobs 8
+
+# 2. Run official EDA
+python -m pathoshift.challenge eda --data-root data/dados --output outputs --jobs 8
+
+# 3. Train grid, freeze selection on validation + validation_proxy, evaluate robustness, export CSVs
+python -m pathoshift.challenge experiment --data-root data/dados --output outputs --deliverable-dir .
+
+# 4. Run brightness_contrast formula sensitivity analysis (A/B/C/D without retraining)
+python -m pathoshift.challenge sensitivity --data-root data/dados --output outputs --jobs 8
+
+# 5. Fast CPU inference from saved model (< 90s)
+python -m pathoshift.challenge predict --data-root data/dados --model outputs/models/proposal.joblib --split validation --out-csv predictions_validation.csv
+python -m pathoshift.challenge predict --data-root data/dados --model outputs/models/proposal.joblib --split robustness --out-csv predictions_robustness.csv
+
+# 6. Validate CSV contract with official Node.js evaluator
+node data/kit/evaluate_pathoshift_crc.mjs --manifest data/dados/manifests/validation.csv --predictions predictions_validation.csv --output outputs/results/eval_validation.json
+node data/kit/evaluate_pathoshift_crc.mjs --manifest data/dados/manifests/robustness.csv --predictions predictions_robustness.csv --output outputs/results/eval_robustness.json
+```
