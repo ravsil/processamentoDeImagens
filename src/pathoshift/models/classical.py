@@ -45,7 +45,9 @@ class HistopathologyFeatureExtractor:
                 # Moments: mean, std, skewness
                 feats.append(float(np.mean(channel)))
                 feats.append(float(np.std(channel)))
-                feats.append(float(stats.skew(channel.ravel())))
+                # Canal constante (ex.: imagem saturada em 255) tem skew indefinido (0/0) -> 0.
+                sk = float(stats.skew(channel.ravel())) if channel.std() > 0 else 0.0
+                feats.append(sk if np.isfinite(sk) else 0.0)
 
                 # Histogram
                 hist, _ = np.histogram(channel, bins=self.color_bins, range=(0, 256), density=True)
